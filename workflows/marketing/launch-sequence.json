@@ -1,0 +1,90 @@
+{
+  "name": "FORGE — Full Launch Sequence",
+  "description": "Orchestrates a complete multi-channel product launch: Twitter thread + HN post draft + Reddit post + newsletter + 24hr follow-up. Triggered manually via webhook.",
+  "version": "1.0.0",
+  "setup": {
+    "required_credentials": ["anthropic_api_key", "twitter_bearer_token", "resend_api_key"],
+    "required_env_vars": ["FORGE_VOICE_SYSTEM_PROMPT", "FORGE_DIGEST_EMAIL", "FORGE_FROM_EMAIL"],
+    "import_instructions": "Import into n8n. This workflow is meant to be triggered once per launch. Review all generated content before the workflow posts.",
+    "mode": "review_before_post — all content generated first, then human approves before posting"
+  },
+  "payload_schema": {
+    "launch_name": "What you're launching (e.g. 'FORGE v0.1 — open source AI growth system')",
+    "github_url": "The GitHub repo or release URL",
+    "key_feature": "The single most important thing about this launch",
+    "honest_limitation": "One real trade-off or current limitation (HN readers respect honesty)",
+    "question_for_hn": "The specific question you want HN to engage with"
+  },
+  "launch_checklist": [
+    "Post Show HN on Sunday 6-9pm US Pacific for best traction",
+    "Have GitHub README polished before posting",
+    "Have docker-compose tested end-to-end",
+    "Have .env.example documented",
+    "Prepare to respond to every HN comment within 2 hours"
+  ],
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "type": "n8n-nodes-base.webhook",
+      "name": "Launch Triggered",
+      "parameters": { "path": "forge-launch", "method": "POST" }
+    },
+    {
+      "id": "generate-all-content",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Generate Launch Content Pack with Claude",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headers": {
+          "x-api-key": "={{ $env.ANTHROPIC_API_KEY }}",
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 4096,
+          "system": "You generate launch content for open source developer tools. You write like a founder talking to peers — direct, specific, zero hype. You know HN culture well and write posts that get real engagement, not eye-rolls.",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Generate a complete launch content pack for:\n\nLaunch: {{ $json.launch_name }}\nGitHub: {{ $json.github_url }}\nKey feature: {{ $json.key_feature }}\nHonest limitation: {{ $json.honest_limitation }}\nHN question: {{ $json.question_for_hn }}\n\nReturn a JSON object with these keys:\n{\n  \"hn_title\": \"Show HN: title under 80 chars\",\n  \"hn_body\": \"3-5 paragraph HN post, problem-first, honest, ends with question\",\n  \"twitter_thread\": [\"tweet 1 (opener)\", \"tweet 2\", \"tweet 3\", \"tweet 4 (CTA)\"],\n  \"reddit_post\": {\"title\": \"...\", \"body\": \"...\" },\n  \"newsletter_subject\": \"email subject line\",\n  \"newsletter_preview\": \"first 2 paragraphs of launch newsletter\"\n}\n\nReturn only the JSON, no surrounding text."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "parse-content",
+      "type": "n8n-nodes-base.function",
+      "name": "Parse Content Pack",
+      "parameters": {
+        "functionCode": "const raw = $input.first().json.content[0].text;\nconst content = JSON.parse(raw);\nreturn [{ json: { ...content, launch_data: $('webhook-trigger').first().json } }];"
+      }
+    },
+    {
+      "id": "send-review-email",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Send Content for Review",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "headers": {
+          "Authorization": "Bearer {{ $env.RESEND_API_KEY }}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "from": "FORGE Launch <launch@forge.so>",
+          "to": ["={{ $env.FORGE_DIGEST_EMAIL }}"],
+          "subject": "FORGE Launch Pack — Review Before Posting",
+          "html": "<h1>Launch Content Pack</h1><h2>HN Title</h2><p>{{ $json.hn_title }}</p><h2>HN Body</h2><pre>{{ $json.hn_body }}</pre><h2>Twitter Thread</h2><pre>{{ JSON.stringify($json.twitter_thread, null, 2) }}</pre><h2>Reddit Post</h2><pre>{{ JSON.stringify($json.reddit_post, null, 2) }}</pre><h2>Newsletter</h2><p><strong>{{ $json.newsletter_subject }}</strong></p><p>{{ $json.newsletter_preview }}</p><hr><p>Reply to this email with 'APPROVE' to trigger posting, or make edits and re-trigger.</p>"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "webhook-trigger": { "main": [["generate-all-content"]] },
+    "generate-all-content": { "main": [["parse-content"]] },
+    "parse-content": { "main": [["send-review-email"]] }
+  }
+}

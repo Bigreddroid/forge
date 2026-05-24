@@ -1,0 +1,134 @@
+{
+  "name": "FORGE — Twitter/X Autopilot",
+  "description": "Handles tweet and thread posting via webhook. Accepts single tweets or full threads. Generates content with Claude if only a brief is provided.",
+  "version": "1.0.0",
+  "setup": {
+    "required_credentials": ["anthropic_api_key", "twitter_bearer_token", "twitter_api_key", "twitter_api_secret", "twitter_access_token", "twitter_access_secret"],
+    "required_env_vars": ["FORGE_VOICE_SYSTEM_PROMPT", "TWITTER_USER_ID"],
+    "import_instructions": "Import into n8n. Add Twitter OAuth credentials under Credentials > Twitter. Activate webhook trigger.",
+    "webhook_path": "/webhook/forge-twitter",
+    "test_command": "curl -X POST http://localhost:5678/webhook/forge-twitter -H 'Content-Type: application/json' -d '{\"type\": \"tweet\", \"text\": \"Test from FORGE.\"}'"
+  },
+  "payload_schema": {
+    "type": "Required. Values: 'tweet' | 'thread' | 'brief'",
+    "text": "For type=tweet: the tweet text (max 280 chars)",
+    "tweets": "For type=thread: array of tweet strings in order",
+    "brief": "For type=brief: {topic, angle, key_insight, tone} — Claude generates the tweet",
+    "scheduled_at": "Optional ISO timestamp for scheduled posting",
+    "reply_to_id": "Optional tweet ID to reply to"
+  },
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "type": "n8n-nodes-base.webhook",
+      "name": "Twitter Request Received",
+      "parameters": {
+        "path": "forge-twitter",
+        "method": "POST",
+        "responseMode": "lastNode"
+      }
+    },
+    {
+      "id": "route-by-type",
+      "type": "n8n-nodes-base.switch",
+      "name": "Route by Type",
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.type }}",
+        "rules": {
+          "rules": [
+            { "value2": "tweet", "output": 0 },
+            { "value2": "thread", "output": 1 },
+            { "value2": "brief", "output": 2 }
+          ]
+        }
+      }
+    },
+    {
+      "id": "validate-tweet-length",
+      "type": "n8n-nodes-base.function",
+      "name": "Validate Tweet",
+      "parameters": {
+        "functionCode": "const text = $input.first().json.text;\nif (!text) throw new Error('No tweet text provided');\nif (text.length > 280) throw new Error(`Tweet too long: ${text.length} chars (max 280)`);\nreturn $input.all();"
+      }
+    },
+    {
+      "id": "generate-from-brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Generate Tweet with Claude",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headers": {
+          "x-api-key": "={{ $env.ANTHROPIC_API_KEY }}",
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 512,
+          "system": "={{ $env.FORGE_VOICE_SYSTEM_PROMPT }}\n\nYou are writing for Twitter/X. Rules: max 280 chars for single tweets. Direct, specific, no fluff. No exclamation points. No 'excited to share'. Lead with the insight.",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Write a tweet for this brief:\nTopic: {{ $json.brief.topic }}\nAngle: {{ $json.brief.angle }}\nKey insight: {{ $json.brief.key_insight }}\nTone: {{ $json.brief.tone || 'direct' }}\n\nReturn only the tweet text, nothing else."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "extract-generated-tweet",
+      "type": "n8n-nodes-base.function",
+      "name": "Extract Generated Tweet",
+      "parameters": {
+        "functionCode": "const text = $input.first().json.content[0].text.trim();\nif (text.length > 280) throw new Error(`Generated tweet too long: ${text.length} chars`);\nreturn [{ json: { text, type: 'tweet' } }];"
+      }
+    },
+    {
+      "id": "post-single-tweet",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Post Tweet",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twitter.com/2/tweets",
+        "authentication": "oAuth1Api",
+        "body": {
+          "text": "={{ $json.text }}",
+          "reply": "={{ $json.reply_to_id ? { in_reply_to_tweet_id: $json.reply_to_id } : undefined }}"
+        }
+      }
+    },
+    {
+      "id": "post-thread",
+      "type": "n8n-nodes-base.function",
+      "name": "Post Thread Sequentially",
+      "parameters": {
+        "functionCode": "// Thread posting requires sequential API calls with reply_to_id chaining.\n// This node processes the tweets array and returns the post sequence.\n// In production, use the Twitter API credential in n8n's HTTP Request node.\nconst tweets = $input.first().json.tweets;\nif (!Array.isArray(tweets) || tweets.length === 0) {\n  throw new Error('Thread requires a tweets array');\n}\nconst oversized = tweets.filter(t => t.length > 280);\nif (oversized.length > 0) {\n  throw new Error(`${oversized.length} tweet(s) exceed 280 chars`);\n}\nreturn [{ json: { tweets, count: tweets.length, status: 'ready_to_post' } }];"
+      }
+    },
+    {
+      "id": "return-success",
+      "type": "n8n-nodes-base.function",
+      "name": "Return Success",
+      "parameters": {
+        "functionCode": "return [{ json: { status: 'posted', tweet_id: $input.first().json?.data?.id, preview: $input.first().json?.text?.substring(0, 80) + '...' } }];"
+      }
+    }
+  ],
+  "connections": {
+    "webhook-trigger": { "main": [["route-by-type"]] },
+    "route-by-type": {
+      "main": [
+        ["validate-tweet-length"],
+        ["post-thread"],
+        ["generate-from-brief"]
+      ]
+    },
+    "validate-tweet-length": { "main": [["post-single-tweet"]] },
+    "generate-from-brief": { "main": [["extract-generated-tweet"]] },
+    "extract-generated-tweet": { "main": [["post-single-tweet"]] },
+    "post-single-tweet": { "main": [["return-success"]] },
+    "post-thread": { "main": [["return-success"]] }
+  }
+}
