@@ -30,8 +30,17 @@ Public. MIT license. Owned by Varun (GitHub: Bigreddroid).
 - `docker-compose.yml` — Full stack: PostgreSQL + n8n + web app
 - `.claude/agents/hermes.md` — Marketing automation agent
 
+### What exists in apps/web/ (Next.js dashboard — BUILT)
+- `apps/web/src/app/dashboard/page.tsx` — Overview: pillar cards, stats, activity feed
+- `apps/web/src/app/dashboard/content/page.tsx` — Submit LinkedIn/Twitter briefs → triggers n8n
+- `apps/web/src/app/dashboard/leads/page.tsx` — Lead pipeline table with scoring bars
+- `apps/web/src/app/dashboard/workflows/page.tsx` — Workflow list with manual trigger buttons
+- `apps/web/src/app/dashboard/settings/page.tsx` — API keys, voice prompt editor, ICP config
+- `apps/web/src/components/sidebar.tsx` — Sidebar nav with FORGE branding
+- `apps/web/src/lib/n8n.ts` — n8n webhook helpers (triggerContentWorkflow, triggerTwitterWorkflow)
+- Stack: Next.js 15, Tailwind, TypeScript, Lucide icons. Dark theme, orange accent.
+
 ### What does NOT exist yet (needs to be built)
-- `apps/web/` — Next.js dashboard (FORGE Cloud UI)
 - `apps/cli/` — `forge` CLI tool
 - `workflows/content/newsletter-generator.json` — Weekly newsletter workflow
 - `workflows/lead-gen/outreach-sequence.json` — Automated cold outreach
