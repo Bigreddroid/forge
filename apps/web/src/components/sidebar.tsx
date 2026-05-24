@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { UserButton } from "@clerk/nextjs";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -14,11 +15,11 @@ import {
 } from "lucide-react";
 
 const nav = [
-  { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-  { href: "/dashboard/content", label: "Content", icon: FileText },
-  { href: "/dashboard/leads", label: "Leads", icon: Users },
-  { href: "/dashboard/workflows", label: "Workflows", icon: Zap },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+  { href: "/dashboard" as const, label: "Overview", icon: LayoutDashboard },
+  { href: "/dashboard/content" as const, label: "Content", icon: FileText },
+  { href: "/dashboard/leads" as const, label: "Leads", icon: Users },
+  { href: "/dashboard/workflows" as const, label: "Workflows", icon: Zap },
+  { href: "/dashboard/settings" as const, label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {
@@ -69,8 +70,15 @@ export function Sidebar() {
           <Github className="w-4 h-4 shrink-0" />
           Open Source
         </a>
-        <div className="px-3 py-2">
+        <div className="px-3 py-2 flex items-center justify-between">
           <p className="text-[11px] text-zinc-600">FORGE v0.1.0</p>
+          <UserButton
+            appearance={{
+              elements: {
+                avatarBox: "w-6 h-6",
+              },
+            }}
+          />
         </div>
       </div>
     </aside>
