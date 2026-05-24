@@ -1,0 +1,79 @@
+{
+  "name": "FORGE — Competitor Intelligence Monitor",
+  "description": "Daily scan of competitor LinkedIn + website content. Summarizes with Claude and delivers to your inbox.",
+  "version": "1.0.0",
+  "setup": {
+    "required_credentials": ["anthropic_api_key", "resend_api_key"],
+    "required_env_vars": [
+      "FORGE_COMPETITOR_URLS",
+      "FORGE_COMPETITOR_LINKEDIN_IDS",
+      "FORGE_DIGEST_EMAIL"
+    ],
+    "schedule": "Daily at 7:00 AM",
+    "import_instructions": "Import into n8n. Add competitor URLs and LinkedIn profile IDs in environment variables."
+  },
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "name": "Daily Intelligence Run",
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] }
+      }
+    },
+    {
+      "id": "fetch-content",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Fetch Competitor Content",
+      "description": "Fetch RSS feeds or use a scraping service (e.g., Browserless, ScrapingBee) for competitor blogs/LinkedIn"
+    },
+    {
+      "id": "analyze-with-claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Analyze with Claude",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headers": {
+          "x-api-key": "={{ $env.ANTHROPIC_API_KEY }}",
+          "anthropic-version": "2023-06-01",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 1500,
+          "messages": [
+            {
+              "role": "user",
+              "content": "Analyze this competitor content and provide:\n1. POSITIONING SUMMARY (2-3 sentences)\n2. CONTENT GAPS they're missing\n3. ONE CONTENT OPPORTUNITY for me to act on today\n4. OVERALL THREAT LEVEL (Low/Medium/High)\n\nContent:\n{{ $json.content }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "send-digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Send Intelligence Digest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "headers": {
+          "Authorization": "Bearer {{ $env.RESEND_API_KEY }}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "from": "FORGE Intelligence <intel@forge.so>",
+          "to": ["={{ $env.FORGE_DIGEST_EMAIL }}"],
+          "subject": "Daily Intel — {{ new Date().toLocaleDateString() }}",
+          "html": "<h2>FORGE Daily Intelligence</h2><pre>{{ $json.content[0].text }}</pre>"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "schedule-trigger": { "main": [["fetch-content"]] },
+    "fetch-content": { "main": [["analyze-with-claude"]] },
+    "analyze-with-claude": { "main": [["send-digest"]] }
+  }
+}

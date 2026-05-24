@@ -1,0 +1,102 @@
+{
+  "name": "FORGE — LinkedIn Content Autopilot",
+  "description": "Takes a content brief via webhook, generates a LinkedIn post with Claude, and schedules it via Buffer or posts directly.",
+  "version": "1.0.0",
+  "setup": {
+    "required_credentials": [
+      "anthropic_api_key",
+      "buffer_access_token (or linkedin_access_token)"
+    ],
+    "required_env_vars": [
+      "FORGE_VOICE_SYSTEM_PROMPT",
+      "FORGE_LINKEDIN_PROFILE_ID"
+    ],
+    "import_instructions": "Import this file into n8n via Workflows > Import from file. Then activate the webhook trigger and configure credentials."
+  },
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "type": "n8n-nodes-base.webhook",
+      "name": "Content Brief Received",
+      "parameters": {
+        "path": "forge-linkedin",
+        "method": "POST",
+        "responseMode": "lastNode"
+      },
+      "description": "Receives content brief: { topic, angle, audience, key_insight, cta, tone, length }"
+    },
+    {
+      "id": "validate-brief",
+      "type": "n8n-nodes-base.function",
+      "name": "Validate Brief",
+      "parameters": {
+        "functionCode": "const required = ['topic', 'angle', 'key_insight'];\nconst body = $input.first().json;\nconst missing = required.filter(k => !body[k]);\nif (missing.length > 0) {\n  throw new Error(`Missing required fields: ${missing.join(', ')}`);\n}\nreturn $input.all();"
+      }
+    },
+    {
+      "id": "generate-post",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Generate Post with Claude",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "headers": {
+          "x-api-key": "={{ $env.ANTHROPIC_API_KEY }}",
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json"
+        },
+        "body": {
+          "model": "claude-sonnet-4-6",
+          "max_tokens": 1024,
+          "system": "={{ $env.FORGE_VOICE_SYSTEM_PROMPT }}",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Write a LinkedIn post using this brief:\n\nTopic: {{ $json.topic }}\nAngle: {{ $json.angle }}\nAudience: {{ $json.audience }}\nKey insight: {{ $json.key_insight }}\nCTA: {{ $json.cta }}\nTone: {{ $json.tone || 'direct and confident' }}\nLength: {{ $json.length || 'medium (250 words)' }}\n\nAdditional context: {{ $json.context || 'None' }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "extract-content",
+      "type": "n8n-nodes-base.function",
+      "name": "Extract Post Content",
+      "parameters": {
+        "functionCode": "const response = $input.first().json;\nconst content = response.content[0].text;\nreturn [{ json: { post_content: content, brief: $('webhook-trigger').first().json } }];"
+      }
+    },
+    {
+      "id": "schedule-post",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Schedule via Buffer",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.bufferapp.com/1/updates/create.json",
+        "headers": {
+          "Authorization": "Bearer {{ $env.BUFFER_ACCESS_TOKEN }}"
+        },
+        "body": {
+          "text": "={{ $json.post_content }}",
+          "profile_ids[]": "={{ $env.FORGE_LINKEDIN_PROFILE_ID }}",
+          "scheduled_at": "={{ $json.brief.scheduled_at || '' }}"
+        }
+      }
+    },
+    {
+      "id": "notify-success",
+      "type": "n8n-nodes-base.function",
+      "name": "Return Success",
+      "parameters": {
+        "functionCode": "return [{ json: { status: 'scheduled', post_preview: $('extract-content').first().json.post_content.substring(0, 150) + '...' } }];"
+      }
+    }
+  ],
+  "connections": {
+    "webhook-trigger": { "main": [["validate-brief"]] },
+    "validate-brief": { "main": [["generate-post"]] },
+    "generate-post": { "main": [["extract-content"]] },
+    "extract-content": { "main": [["schedule-post"]] },
+    "schedule-post": { "main": [["notify-success"]] }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "name": "FORGE — 5-Email Nurture Sequence",
+  "description": "Triggered when a lead downloads a lead magnet. Sends a 5-email sequence over 21 days.",
+  "version": "1.0.0",
+  "setup": {
+    "required_credentials": ["resend_api_key"],
+    "required_env_vars": ["FORGE_FROM_EMAIL", "FORGE_FROM_NAME", "FORGE_CALENDLY_LINK"],
+    "trigger": "Webhook — fire when lead submits lead magnet form",
+    "import_instructions": "Import into n8n. Connect Resend credentials. Update email copy in each Send Email node."
+  },
+  "sequence": [
+    {
+      "email": 1,
+      "delay_hours": 0,
+      "subject": "Your [Lead Magnet Name] is here",
+      "purpose": "Deliver the promised content + set expectations",
+      "body_outline": "Thank them. Deliver the asset. Tell them what's coming over the next 2 weeks (value, not pitch). One soft CTA: reply with their #1 challenge."
+    },
+    {
+      "email": 2,
+      "delay_hours": 48,
+      "subject": "The thing most founders get wrong about [topic]",
+      "purpose": "Pure value, no pitch. Build trust.",
+      "body_outline": "Share a counterintuitive insight related to their problem. No mention of your services. CTA: link to your best content piece."
+    },
+    {
+      "email": 3,
+      "delay_hours": 96,
+      "subject": "How [Client Name] went from [problem] to [result]",
+      "purpose": "Social proof. Show the transformation.",
+      "body_outline": "Short case study (3 paragraphs): situation → what changed → result. CTA: 'We did this in 90 days. Curious if it'd work for you?'"
+    },
+    {
+      "email": 4,
+      "delay_hours": 168,
+      "subject": "A system for [specific outcome they care about]",
+      "purpose": "Introduce your framework. Position as the solution.",
+      "body_outline": "Introduce the FORGE system at a high level. Explain the 6 pillars briefly. Show how they connect to the reader's goal. CTA: 'I mapped out what this would look like for you — want to see it?'"
+    },
+    {
+      "email": 5,
+      "delay_hours": 504,
+      "subject": "Last thing (then I'll leave you alone)",
+      "purpose": "Direct close. Create urgency without being pushy.",
+      "body_outline": "Acknowledge you've sent a few emails. Be honest: 'I only work with X founders per month. If now isn't the right time, no hard feelings — I'll keep sharing useful stuff.' CTA: Book a free 30-min Authority Audit call."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "type": "n8n-nodes-base.webhook",
+      "name": "Lead Magnet Submission",
+      "parameters": { "path": "forge-nurture", "method": "POST" }
+    },
+    {
+      "id": "email-1",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Send Email 1 — Delivery",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "headers": {
+          "Authorization": "Bearer {{ $env.RESEND_API_KEY }}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "from": "{{ $env.FORGE_FROM_NAME }} <{{ $env.FORGE_FROM_EMAIL }}>",
+          "to": ["={{ $json.email }}"],
+          "subject": "Your [Lead Magnet] is here, {{ $json.first_name }}",
+          "html": "<p>Hey {{ $json.first_name }},</p><p>[EMAIL 1 BODY — customize in FORGE settings]</p>"
+        }
+      }
+    },
+    {
+      "id": "wait-2-days",
+      "type": "n8n-nodes-base.wait",
+      "parameters": { "amount": 2, "unit": "days" }
+    },
+    {
+      "id": "email-2",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Send Email 2 — Value",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "headers": {
+          "Authorization": "Bearer {{ $env.RESEND_API_KEY }}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "from": "{{ $env.FORGE_FROM_NAME }} <{{ $env.FORGE_FROM_EMAIL }}>",
+          "to": ["={{ $json.email }}"],
+          "subject": "The thing most founders get wrong about content",
+          "html": "<p>Hey {{ $json.first_name }},</p><p>[EMAIL 2 BODY — customize in FORGE settings]</p>"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "webhook-trigger": { "main": [["email-1"]] },
+    "email-1": { "main": [["wait-2-days"]] },
+    "wait-2-days": { "main": [["email-2"]] }
+  },
+  "note": "Full 5-email sequence continues with additional wait + send nodes. See docs/getting-started.md for complete setup."
+}

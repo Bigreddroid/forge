@@ -1,0 +1,104 @@
+{
+  "name": "FORGE — Prospect Finder",
+  "description": "Pulls ICP-matched leads from Apollo, scores them, and routes qualified leads to HubSpot CRM.",
+  "version": "1.0.0",
+  "setup": {
+    "required_credentials": ["apollo_api_key", "hubspot_api_key"],
+    "required_env_vars": [
+      "FORGE_ICP_TITLES",
+      "FORGE_ICP_INDUSTRIES",
+      "FORGE_ICP_MIN_EMPLOYEES",
+      "FORGE_ICP_MAX_EMPLOYEES",
+      "FORGE_MIN_LEAD_SCORE"
+    ],
+    "schedule": "Daily at 8:00 AM",
+    "import_instructions": "Import into n8n. Set your ICP filters in environment variables. Activate the schedule trigger."
+  },
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "name": "Daily Prospect Run",
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 24 }] }
+      }
+    },
+    {
+      "id": "fetch-prospects",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Fetch from Apollo",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.apollo.io/v1/mixed_people/search",
+        "headers": {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
+          "X-Api-Key": "={{ $env.APOLLO_API_KEY }}"
+        },
+        "body": {
+          "titles": "={{ JSON.parse($env.FORGE_ICP_TITLES) }}",
+          "organization_industry_tag_ids": "={{ JSON.parse($env.FORGE_ICP_INDUSTRIES) }}",
+          "organization_num_employees_ranges": ["={{ $env.FORGE_ICP_MIN_EMPLOYEES }},{{ $env.FORGE_ICP_MAX_EMPLOYEES }}"],
+          "page": 1,
+          "per_page": 25
+        }
+      }
+    },
+    {
+      "id": "score-leads",
+      "type": "n8n-nodes-base.function",
+      "name": "Score Each Lead",
+      "parameters": {
+        "functionCode": "const leads = $input.first().json.people || [];\nconst scored = leads.map(p => {\n  let score = 0;\n  if (p.title?.match(/founder|ceo|co-founder/i)) score += 25;\n  if (p.organization?.num_employees > 10 && p.organization?.num_employees < 200) score += 15;\n  if (p.linkedin_url) score += 10;\n  if (p.email) score += 10;\n  return { ...p, forge_score: score };\n});\nconst minScore = parseInt($env.FORGE_MIN_LEAD_SCORE || '40');\nreturn scored.filter(p => p.forge_score >= minScore).map(p => ({ json: p }));"
+      }
+    },
+    {
+      "id": "dedupe-check",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Check HubSpot for Existing Contact",
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "headers": {
+          "Authorization": "Bearer {{ $env.HUBSPOT_API_KEY }}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "filterGroups": [{ "filters": [{ "propertyName": "email", "operator": "EQ", "value": "={{ $json.email }}" }] }]
+        }
+      }
+    },
+    {
+      "id": "create-contact",
+      "type": "n8n-nodes-base.httpRequest",
+      "name": "Create HubSpot Contact",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "headers": {
+          "Authorization": "Bearer {{ $env.HUBSPOT_API_KEY }}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "properties": {
+            "firstname": "={{ $json.first_name }}",
+            "lastname": "={{ $json.last_name }}",
+            "email": "={{ $json.email }}",
+            "jobtitle": "={{ $json.title }}",
+            "company": "={{ $json.organization?.name }}",
+            "linkedin": "={{ $json.linkedin_url }}",
+            "forge_lead_score": "={{ $json.forge_score }}",
+            "lead_source": "FORGE Prospect Finder",
+            "lifecyclestage": "lead"
+          }
+        }
+      }
+    }
+  ],
+  "connections": {
+    "schedule-trigger": { "main": [["fetch-prospects"]] },
+    "fetch-prospects": { "main": [["score-leads"]] },
+    "score-leads": { "main": [["dedupe-check"]] },
+    "dedupe-check": { "main": [["create-contact"]] }
+  }
+}
